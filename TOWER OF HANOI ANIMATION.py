@@ -2,6 +2,7 @@ import turtle
 import time
 import math
 import tkinter as tk
+import tkinter.font as tkfont  
 
 def get_rounded_poly(shape_name, target_width):
     h = 30
@@ -25,6 +26,8 @@ def get_rounded_poly(shape_name, target_width):
         rad = math.radians(angle)
         poly.append((-w/2 + r - r*math.cos(rad), -h/2 + r - r*math.sin(rad)))
 
+
+    poly = [(-py, px) for px, py in poly]
     turtle.register_shape(shape_name, tuple(poly))
 
 
@@ -40,6 +43,7 @@ PEAK_HEIGHT = GROUND_LEVEL + ROD_HEIGHT + 40
 GLIDE_STEP = 6
 TICK_MS = 12
 PAUSE_BETWEEN_MOVES = 100
+CODE_STEP_MS = 800
 
 screen = turtle.Screen()
 screen.setup(SCREEN_WIDTH, SCREEN_HEIGHT)
@@ -51,7 +55,7 @@ screen.delay(10)
 RODS = {"A": -250, "B": 0, "C": 250}
 
 rods_state = {"A": [], "B": [], "C": []}
-pending_moves = []
+pending_steps = []
 is_running = False
 is_paused = False
 puzzle_complete = False
@@ -71,6 +75,120 @@ counter_drawer = turtle.Turtle()
 counter_drawer.hideturtle()
 counter_drawer.speed(0)
 counter_drawer.color("white")
+
+CODE_LINES = [
+    "def hanoi(n, source, target, auxiliary):",
+    "   if n == 0:",
+    "       return",
+    "   hanoi(n - 1, source, auxiliary, target)",
+    "   move_disk(n, source, target)",
+    "   hanoi(n - 1, auxiliary, target, source)",
+    ]
+
+CODE_FONT = ("Courier New", 11)
+HEADER_FONT = ("Arial", 11, "bold")
+
+LINE_H = 20
+FIRST_LINE_Y = -232          # turtle-y of the first code line's center
+PANEL_TOP = -195
+PANEL_BOTTOM = FIRST_LINE_Y - (len(CODE_LINES) - 1) * LINE_H - LINE_H // 2 - 8
+INFO_CHARS = 40            
+PANEL_GAP = 20
+PANEL_PAD = 32             
+
+
+def measure_char_width():
+    # measure with the SAME canvas/font that draws the text, so it always fits
+    canvas = screen.getcanvas()
+    probe = canvas.create_text(0, 0, text="0" * 100, font=CODE_FONT, anchor="nw")
+    x1, _, x2, _ = canvas.bbox(probe)
+    canvas.delete(probe)
+    return (x2 - x1) / 100.0
+
+
+CHAR_W = measure_char_width()
+CODE_W = PANEL_PAD + max(len(line) for line in CODE_LINES) * CHAR_W
+INFO_W = PANEL_PAD + INFO_CHARS * CHAR_W
+CODE_LEFT = -(CODE_W + PANEL_GAP + INFO_W) / 2   
+CODE_RIGHT = CODE_LEFT + CODE_W
+INFO_LEFT = CODE_RIGHT + PANEL_GAP
+INFO_RIGHT = INFO_LEFT + INFO_W
+
+code_highlight = None
+code_text_ids = []
+call_text_id = None
+depth_text_id = None
+step_text_id = None
+
+def code_line_y(index):
+    return FIRST_LINE_Y - index * LINE_H
+
+def build_code_panel():
+    global code_highlight, call_text_id, depth_text_id, step_text_id
+    canvas = screen.getcanvas()
+
+    canvas.create_rectangle(CODE_LEFT, -PANEL_TOP, CODE_RIGHT, -PANEL_BOTTOM,
+                            fill = "#252525", outline="#444444")
+    canvas.create_rectangle(INFO_LEFT, -PANEL_TOP, INFO_RIGHT, -PANEL_BOTTOM,
+                            fill="#252525", outline="#444444"
+                            )
+    #header
+    canvas.create_text(CODE_LEFT + 16, -(PANEL_TOP - 14), text="Recursive Logic",
+                       fill="white", font=HEADER_FONT, anchor = "w")
+    canvas.create_text(INFO_LEFT + 16, -(PANEL_TOP - 14), text="Current Call",
+                       fill="white", font=HEADER_FONT, anchor="w")
+
+    code_highlight = canvas.create_rectangle(0, 0, 0, 0, fill="#ffe066", outline="", state="hidden")
+
+    code_text_ids.clear()
+
+    for i, line in enumerate(CODE_LINES):
+        tid = canvas.create_text(CODE_LEFT + 16, -code_line_y(i), text=line, fill="#d0d0d0", font=CODE_FONT, anchor="w")
+        code_text_ids.append(tid)
+
+    call_text_id = canvas.create_text(INFO_LEFT + 16, -code_line_y(0), text="",
+                                      fill="#8ecae6", font=CODE_FONT, anchor="w")
+    depth_text_id = canvas.create_text(INFO_LEFT + 16, -code_line_y(1), text="",
+                                       fill="white", font=CODE_FONT, anchor="w")
+    step_text_id = canvas.create_text(INFO_LEFT + 16, -code_line_y(2), text="",
+                                      fill="#ffe066", font=CODE_FONT, anchor="w")
+
+def reset_code_panel():
+    canvas = screen.getcanvas()
+    canvas.itemconfig(code_highlight, state="hidden")
+    for tid in code_text_ids:
+        canvas.itemconfig(tid, fill="#d0d0d0")
+    canvas.itemconfig(call_text_id, text="Ready")
+    canvas.itemconfig(depth_text_id, text="")
+    canvas.itemconfig(step_text_id, text="")
+
+
+def show_step(line, n, source, target, aux, depth, text):
+    canvas = screen.getcanvas()
+    y = code_line_y(line)
+
+    canvas.coords(code_highlight,
+                  CODE_LEFT + 6, -y - LINE_H / 2,
+                  CODE_RIGHT - 6, -y + LINE_H / 2)
+    canvas.itemconfig(code_highlight, state="normal")
+
+    for i, tid in enumerate(code_text_ids):
+        canvas.itemconfig(tid, fill="#1a1a1a" if i == line else "#d0d0d0")
+
+    canvas.itemconfig(call_text_id,
+                      text=f"hanoi(n={n}, source={source}, target={target}, aux={aux})")
+    canvas.itemconfig(depth_text_id, text=f"Recursion depth: {depth}")
+    canvas.itemconfig(step_text_id, text=text)
+
+
+def show_finished_panel():
+    canvas = screen.getcanvas()
+    canvas.itemconfig(code_highlight, state="hidden")
+    for tid in code_text_ids:
+        canvas.itemconfig(tid, fill="#d0d0d0")
+    canvas.itemconfig(call_text_id, text="hanoi() finished")
+    canvas.itemconfig(depth_text_id, text="")
+    canvas.itemconfig(step_text_id, text=f"Solved in {move_count} moves")
 
 move_drawer = turtle.Turtle()
 move_drawer.hideturtle()
@@ -94,14 +212,14 @@ def update_score_display():
 def update_move_display(disk_number, from_rod, to_rod):
     move_drawer.clear()
     move_drawer.penup()
-    move_drawer.goto(0, -300)
+    move_drawer.goto(0, 300)
     move_drawer.write(f"Disk {disk_number}: Rod {from_rod} → Rod {to_rod}", align="center", font=("Arial", 16, "bold"))
 
 
 def show_complete_message():
     complete_drawer.clear()
     complete_drawer.penup()
-    complete_drawer.goto(0, -255)
+    complete_drawer.goto(0, 300)
     complete_drawer.write(f"PUZZLE COMPLETE!  {move_count} moves", align="center", font=("Arial", 20, "bold"))
 
 
@@ -180,8 +298,8 @@ def update_label(d):
     if h <= 1:
         h = SCREEN_HEIGHT
 
-    canvas_x = d.xcor() + (w / 2)
-    canvas_y = (h / 2) - d.ycor()
+    canvas_x = d.xcor()
+    canvas_y = -d.ycor()
 
     if getattr(d, "label_id", None) is None:
         d.label_id = canvas.create_text(
@@ -205,9 +323,10 @@ def redraw_all_labels():
 
 
 def refresh_screen():
+    screen.update()
     for d in all_active_turtles:
         update_label(d)
-    screen.update()
+    screen.getcanvas().update_idletasks()
 
 
 def label_heartbeat():
@@ -242,11 +361,11 @@ def build_disks():
         disk.penup()
         disk.speed(0)
 
-        disk_width = 40 + (NUM_DISKS - i)
+        disk_width = 30 + i * 14
         shape_id = f"disk_{i}"
         get_rounded_poly(shape_id, disk_width)
         disk.shape(shape_id)
-        disk.shapesize(stretch_wid=1, stretch_len=i * 0.8)
+        disk.shapesize(1, 1)
 
         color_index = (i - 1) % len(colors)
         disk.color("black", colors[color_index])
@@ -270,6 +389,10 @@ anim_target_x = 0
 anim_target_y = 0
 
 
+def event_to_turtle_coords(event):
+    canvas = screen.getcanvas()
+    return canvas.canvasx(event.x), -canvas.canvasy(event.y)
+
 def handle_motion(event):
     global button_hovered
 
@@ -282,7 +405,7 @@ def handle_motion(event):
         h = SCREEN_HEIGHT
 
     x = event.x - (w / 2)
-    y = (h / 2) - event.y
+    x, y = event_to_turtle_coords(event)
 
     old_button = button_hovered
     button_hovered = None
@@ -301,13 +424,30 @@ def handle_motion(event):
         screen.getcanvas().config(cursor="")
 
 
-def plan_moves(n, source, target, auxiliary):
+def plan_moves(n, source, target, auxiliary, depth=0):
+    """Mirrors the recursive algorithm and records one step per line of code.
+    kind = "trace" (just highlight a line) or "move" (highlight + animate a disk).
+    The line numbers match CODE_LINES."""
+
+    def add(kind, line, text):
+        pending_steps.append((kind, line, n, source, target, auxiliary, depth, text))
+
+    add("trace", 0, f"Enter hanoi({n}, {source}, {target}, {auxiliary})")
+
     if n == 0:
+        add("trace", 1, "n == 0 is True")
+        add("trace", 2, "Base case -> return")
         return
 
-    plan_moves(n - 1, source, auxiliary, target)
-    pending_moves.append((source, target))
-    plan_moves(n - 1, auxiliary, target, source)
+    add("trace", 1, f"n == {n}, not 0 -> keep going")
+
+    add("trace", 3, f"Recurse -> hanoi({n-1}, {source}, {auxiliary}, {target})")
+    plan_moves(n - 1, source, auxiliary, target, depth + 1)
+
+    add("move", 4, f"Move disk {n}: {source} -> {target}")
+
+    add("trace", 5, f"Recurse -> hanoi({n-1}, {auxiliary}, {target}, {source})")
+    plan_moves(n - 1, auxiliary, target, source, depth + 1)
 
 
 def start_next_move(callback_id=None):
@@ -319,15 +459,26 @@ def start_next_move(callback_id=None):
     if not is_running or puzzle_complete:
         return
 
+    if anim_disk is not None:
+        return
+
     if is_paused:
         screen.ontimer(lambda rid=run_id: start_next_move(rid), TICK_MS)
         return
 
-    if not pending_moves:
+    if not pending_steps:
         finish_puzzle()
         return
 
-    from_rod, to_rod = pending_moves.pop(0)
+    kind, line, n, source, target, aux, depth, text = pending_steps.pop(0)
+    show_step(line, n, source, target, aux, depth, text)
+
+    if kind == "trace":
+        # just show the highlighted line for a moment, then continue
+        screen.ontimer(lambda rid=run_id: start_next_move(rid), CODE_STEP_MS)
+        return
+
+    from_rod, to_rod = source, target
 
     if not rods_state[from_rod]:
         finish_puzzle()
@@ -384,17 +535,13 @@ def animation_tick(callback_id=None):
         if d.ycor() <= anim_target_y:
             anim_phase = None
 
-    update_label(d)
     refresh_screen()
 
     if anim_phase is None:
         rods_state[anim_to_rod].append(d)
+        anim_disk = None
         move_count += 1
         update_score_display()
-
-        if len(rods_state["C"]) == NUM_DISKS:
-            finish_puzzle()
-            return
 
         current_run = run_id
 
@@ -414,6 +561,7 @@ def finish_puzzle():
 
     move_drawer.clear()
     show_complete_message()
+    show_finished_panel()
     refresh_screen()
 
 
@@ -450,7 +598,7 @@ def finish_restart():
     is_paused = False
     puzzle_complete = False
 
-    pending_moves.clear()
+    pending_steps.clear()
     anim_disk = None
     anim_phase = None
 
@@ -466,12 +614,13 @@ def finish_restart():
 
     move_drawer.clear()
     complete_drawer.clear()
+    reset_code_panel()
 
     build_disks()
     draw_buttons()
     update_score_display()
 
-    pending_moves.clear()
+    pending_steps.clear()
 
     plan_moves(NUM_DISKS, "A", "C", "B")
 
@@ -599,7 +748,7 @@ def handle_click(event):
         h = SCREEN_HEIGHT
 
     x = event.x - (w / 2)
-    y = (h / 2) - event.y
+    x, y = event_to_turtle_coords(event)
 
     if 140 <= x <= 245 and 245 <= y <= 280:
         toggle_pause()
@@ -613,12 +762,29 @@ is_running = True
 
 draw_rods()
 draw_buttons()
+build_code_panel()
+reset_code_panel()
 build_disks()
 update_score_display()
 
 plan_moves(NUM_DISKS, "A", "C", "B")
 
-screen.ontimer(start_next_move, 500)
+screen.ontimer(lambda: start_next_move(run_id), 500)
 screen.ontimer(label_heartbeat, 100)
+
+import traceback
+
+def show_error_in_window(exc, val, tb):
+    traceback.print_exception(exc, val, tb)
+    try:
+        line = traceback.extract_tb(tb)[-1].lineno
+        canvas = screen.getcanvas()
+        canvas.itemconfig(call_text_id, text=f"ERROR at line {line}", fill="#ff6b6b")
+        canvas.itemconfig(depth_text_id, text=exc.__name__, fill="#ff6b6b")
+        canvas.itemconfig(step_text_id, text=str(val)[:40], fill="#ff6b6b")
+    except Exception:
+        pass
+
+screen.getcanvas().winfo_toplevel().report_callback_exception = show_error_in_window
 
 screen.mainloop()
